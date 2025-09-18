@@ -70,7 +70,7 @@ class _PlannerContentState extends State<_PlannerContent> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Time Planner'),
+        title: const Text('Renove Planner'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
           IconButton(

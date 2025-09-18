@@ -39,7 +39,7 @@ class _LoginContent extends StatelessWidget {
     });
 
     return Scaffold(
-      appBar: AppBar(title: const Text('My Planner')),
+      appBar: AppBar(title: const Text('Renove Planner')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Column(
