@@ -48,15 +48,17 @@ class _TimeGridState extends State<TimeGrid> {
   void initState() {
     super.initState();
     WidgetsBinding.instance
-        .addPostFrameCallback((_) => _maybeScrollToCurrentTime());
+        .addPostFrameCallback((_) => _scrollToRelevantTime());
   }
 
   @override
   void didUpdateWidget(TimeGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedDay != widget.selectedDay) {
-       WidgetsBinding.instance
-          .addPostFrameCallback((_) => _maybeScrollToCurrentTime());
+
+    if (oldWidget.selectedDay != widget.selectedDay ||
+        oldWidget.activities.length != widget.activities.length) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _scrollToRelevantTime());
     }
   }
 
@@ -66,27 +68,49 @@ class _TimeGridState extends State<TimeGrid> {
     super.dispose();
   }
 
-  void _maybeScrollToCurrentTime() {
+  bool _isToday(DateTime day) {
+    final now = DateTime.now();
+    return now.year == day.year && now.month == day.month && now.day == day.day;
+  }
+
+  void _scrollToRelevantTime() {
     if (!_scrollController.hasClients) return;
 
+    DateTime scrollTargetTime;
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final selectedDay = DateTime(
-        widget.selectedDay.year, widget.selectedDay.month, widget.selectedDay.day);
+    final isSelectedDayToday = _isToday(widget.selectedDay);
 
-    if (today == selectedDay) {
-      final oneHourBefore = now.subtract(const Duration(hours: 1));
-      final scrollTime = oneHourBefore.hour < 0
-          ? now.copyWith(hour: 0, minute: 0)
-          : oneHourBefore;
-      final offset = _calculateTopOffset(scrollTime);
-      
-      _scrollController.animateTo(
-        offset,
-        duration: const Duration(milliseconds: 500),
-        curve: Curves.easeOut,
+    if (widget.activities.isNotEmpty) {
+      widget.activities.sort((a, b) => a.startTime.compareTo(b.startTime));
+      if (isSelectedDayToday) {
+        final pastOrCurrentActivities = widget.activities.where((act) => act.startTime.isBefore(now)).toList();
+        scrollTargetTime = pastOrCurrentActivities.isNotEmpty
+            ? pastOrCurrentActivities.last.startTime
+            : widget.activities.first.startTime;
+      } else {
+        scrollTargetTime = widget.activities.first.startTime;
+      }
+    } else {
+      scrollTargetTime = widget.selectedDay.copyWith(
+        hour: now.hour,
+        minute: now.minute,
+        second: 0,
+        millisecond: 0,
+        microsecond: 0,
       );
     }
+
+    final finalScrollTime = scrollTargetTime.hour > 0
+        ? scrollTargetTime.subtract(const Duration(hours: 1))
+        : scrollTargetTime.copyWith(hour: 0, minute: 0);
+
+    final offset = _calculateTopOffset(finalScrollTime);
+    
+    _scrollController.animateTo(
+      offset,
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeOut,
+    );
   }
 
   List<EventLayoutProperties> _calculateLayout(
@@ -94,50 +118,45 @@ class _TimeGridState extends State<TimeGrid> {
     if (activities.isEmpty) return [];
     List<EventLayoutProperties> layoutProps = [];
     activities.sort((a, b) => a.startTime.compareTo(b.startTime));
-
+    
     List<List<Activity>> collisionGroups = [];
-    if(activities.isNotEmpty) {
-      collisionGroups.add([activities.first]);
-      for(int i = 1; i < activities.length; i++) {
+    if (activities.isNotEmpty) {
+      for (var event in activities) {
         bool placed = false;
-        for(final group in collisionGroups) {
-          if(!activities[i].startTime.isBefore(group.last.endTime)) {
-            group.add(activities[i]);
+        for (var group in collisionGroups) {
+          if (group.isNotEmpty && !event.startTime.isBefore(group.last.endTime)) {
+            group.add(event);
             placed = true;
             break;
           }
         }
-        if(!placed) {
-          collisionGroups.add([activities[i]]);
+        if (!placed) {
+          collisionGroups.add([event]);
         }
       }
     }
 
-    for (final group in collisionGroups) {
-      for (int i = 0; i < group.length; i++) {
-        final activity = group[i];
+    for (int i = 0; i < collisionGroups.length; i++) {
+      final group = collisionGroups[i];
+      for (final activity in group) {
         layoutProps.add(EventLayoutProperties(
             activity: activity,
             top: _calculateTopOffset(activity.startTime),
             height: _calculateHeight(activity.startTime, activity.endTime),
-            left: (totalWidth / collisionGroups.length) * collisionGroups.indexOf(group),
+            left: (totalWidth / collisionGroups.length) * i,
             width: (totalWidth / collisionGroups.length),
         ));
       }
     }
     return layoutProps;
   }
-  
+
   @override
   Widget build(BuildContext context) {
     final availableWidth = MediaQuery.of(context).size.width -
         widget.leftPadding -
         widget.rightPadding;
     final layoutProperties = _calculateLayout(widget.activities, availableWidth);
-
-    if (widget.activities.isEmpty) {
-      return const Center(child: Text('Nenhuma atividade para este dia.'));
-    }
 
     return SingleChildScrollView(
       controller: _scrollController,
@@ -146,8 +165,46 @@ class _TimeGridState extends State<TimeGrid> {
         child: Stack(
           children: [
             _buildTimeLines(),
+            if (widget.activities.isEmpty)
+              _buildEmptyDayMessage(),
             ...layoutProperties.map((props) => _buildActivityEvent(props)).toList(),
           ],
+        ),
+      ),
+    );
+  }
+
+ Widget _buildEmptyDayMessage() {
+    DateTime messageTime;
+    String messageText;
+    final now = DateTime.now();
+
+    if (_isToday(widget.selectedDay)) {
+      messageTime = now;
+      messageText = 'Nenhuma atividade para hoje.';
+    } else {
+      messageTime = widget.selectedDay.copyWith(
+        hour: now.hour,
+        minute: now.minute,
+      );
+      messageText = 'Nenhuma atividade para este dia.';
+    }
+
+    return Positioned(
+      top: _calculateTopOffset(messageTime),
+      left: widget.leftPadding,
+      right: widget.rightPadding,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            messageText,
+            style: TextStyle(color: Colors.grey.shade700, fontSize: 14, fontWeight: FontWeight.w500),
+          ),
         ),
       ),
     );
